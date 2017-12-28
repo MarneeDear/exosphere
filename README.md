@@ -29,3 +29,24 @@ npm run watch
 Based on the instructions found here:
 
 <https://medium.com/@ezekeal/building-an-electron-app-with-elm-part-1-boilerplate-3416a730731f>
+
+-------
+
+Building a packages
+
+Install the electron packager
+https://www.npmjs.com/package/electron-packager
+
+```bash
+# for use in npm scripts 
+npm install electron-packager --save-dev
+ 
+# for use from cli 
+npm install electron-packager -g
+```
+
+Run the packager like this and you will build a package for the OS you are running the command on.
+
+```bash
+electron-packager .
+```
