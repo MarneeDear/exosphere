@@ -1,8 +1,8 @@
-module Main exposing (..)
+module Main exposing (main)
 
-import Dict exposing (Dict)
-import Html exposing (..)
-import Html.Attributes exposing (..)
+import Dict
+import Html exposing (Html, button, div, fieldset, h2, input, label, p, strong, table, td, text, th, tr)
+import Html.Attributes exposing (placeholder, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Http
 import Json.Decode as Decode
@@ -28,7 +28,9 @@ init : ( Model, Cmd Msg )
 
 
 init =
-    ( { authToken = "" {- Todo remove the following hard coding and decode JSON in auth token response -}
+    ( { authToken = ""
+
+      {- Todo remove the following hard coding and decode JSON in auth token response -}
       , endpoints =
             { glance = "https://tombstone-cloud.cyverse.org:9292"
             , nova = "https://tombstone-cloud.cyverse.org:8774/v2.1"
@@ -41,11 +43,14 @@ init =
                 "default"
                 "demo"
                 ""
-            {- password -}
+
+      {- password -}
       , messages = []
       , images = []
       , servers = []
       , viewState = Login
+      , flavors = []
+      , keypairs = []
       }
     , Cmd.none
     )
@@ -59,6 +64,8 @@ type alias Model =
     , images : List Image
     , servers : List Server
     , viewState : ViewState
+    , flavors : List Flavor
+    , keypairs : List Keypair
     }
 
 
@@ -68,6 +75,7 @@ type ViewState
     | ListImages
     | ListUserServers
     | ServerDetail Server
+    | CreateServer CreateServerRequest
 
 
 type alias Creds =
@@ -81,7 +89,9 @@ type alias Creds =
 
 
 type alias Endpoints =
-    { glance : String, nova : String }
+    { glance : String
+    , nova : String
+    }
 
 
 type alias Image =
@@ -102,7 +112,7 @@ type alias Server =
 
 
 
-{- Todo add to ServerDetails:
+{- Todo add to ServerDetail:
    - IP addresses
    - Flavor
    - Image
@@ -111,7 +121,7 @@ type alias Server =
    - Security Groups
    - Etc
 
-   Also, make status and powerState union types, keyName a key type, created a real date/time, etc
+   Also, make status and powerState union types, keypairName a key type, created a real date/time, etc
 -}
 
 
@@ -119,24 +129,52 @@ type alias ServerDetails =
     { status : String
     , created : String
     , powerState : Int
-    , keyName : String
+    , keypairName : String
+    }
+
+
+type alias CreateServerRequest =
+    { name : String
+    , imageUuid : String
+    , flavorUuid : String
+    , keypairName : String
+    }
+
+
+type alias Flavor =
+    { uuid : String
+    , name : String
+    }
+
+
+type alias Keypair =
+    { name : String
+    , publicKey : String
+    , fingerprint : String
     }
 
 
 type Msg
     = ChangeViewState ViewState
+    | RequestAuth
+    | RequestCreateServer CreateServerRequest
+    | ReceiveAuth (Result Http.Error (Http.Response String))
+    | ReceiveImages (Result Http.Error (List Image))
+    | ReceiveServers (Result Http.Error (List Server))
+    | ReceiveServerDetail Server (Result Http.Error ServerDetails)
+    | ReceiveCreateServer (Result Http.Error String)
+    | ReceiveFlavors (Result Http.Error (List Flavor))
+    | ReceiveKeypairs (Result Http.Error (List Keypair))
     | InputAuthURL String
     | InputProjectDomain String
     | InputProjectName String
     | InputUserDomain String
     | InputUsername String
     | InputPassword String
-    | RequestAuth
-    | ReceiveAuth (Result Http.Error (Http.Response String))
-    | ReceiveImages (Result Http.Error (List Image))
-    | ReceiveServers (Result Http.Error (List Server))
-    | ReceiveServerDetails Server (Result Http.Error ServerDetails)
-    | LaunchImage Image
+    | InputCreateServerName CreateServerRequest String
+    | InputCreateServerImage CreateServerRequest String
+    | InputCreateServerSize CreateServerRequest String
+    | InputCreateServerKeypairName CreateServerRequest String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -161,8 +199,42 @@ update msg model =
                         ( newModel, requestServers newModel )
 
                     ServerDetail server ->
-                        ( newModel, requestServerDetails newModel server )
+                        ( newModel, requestServerDetail newModel server )
 
+                    CreateServer _ ->
+                        {- Todo also retrieve a list of images -}
+                        ( newModel, Cmd.batch [ requestFlavors newModel, requestKeypairs newModel ] )
+
+        RequestAuth ->
+            ( model, requestAuthToken model )
+
+        RequestCreateServer createServerRequest ->
+            ( model, requestCreateServer model createServerRequest )
+
+        ReceiveAuth response ->
+            receiveAuth model response
+
+        ReceiveImages result ->
+            receiveImages model result
+
+        ReceiveServers result ->
+            receiveServers model result
+
+        ReceiveServerDetail server result ->
+            receiveServerDetail model server result
+
+        ReceiveFlavors result ->
+            receiveFlavors model result
+
+        ReceiveKeypairs result ->
+            receiveKeypairs model result
+
+        ReceiveCreateServer _ ->
+            {- Recursive call of update function! Todo this ignores the result of server creation API call, we should display errors to user -}
+            update (ChangeViewState ListUserServers) model
+
+        --( { model | viewState = ListUserServers }, Cmd.none )
+        {- Form inputs -}
         InputAuthURL authURL ->
             let
                 creds =
@@ -205,23 +277,33 @@ update msg model =
             in
                 ( { model | creds = { creds | password = password } }, Cmd.none )
 
-        RequestAuth ->
-            ( model, requestAuthToken model )
+        InputCreateServerName createServerRequest name ->
+            let
+                viewState =
+                    CreateServer { createServerRequest | name = name }
+            in
+                ( { model | viewState = viewState }, Cmd.none )
 
-        ReceiveAuth response ->
-            receiveAuth model response
+        InputCreateServerImage createServerRequest imageUuid ->
+            let
+                viewState =
+                    CreateServer { createServerRequest | imageUuid = imageUuid }
+            in
+                ( { model | viewState = viewState }, Cmd.none )
 
-        ReceiveImages result ->
-            receiveImages model result
+        InputCreateServerSize createServerRequest flavorUuid ->
+            let
+                viewState =
+                    CreateServer { createServerRequest | flavorUuid = flavorUuid }
+            in
+                ( { model | viewState = viewState }, Cmd.none )
 
-        ReceiveServers result ->
-            receiveServers model result
-
-        ReceiveServerDetails server result ->
-            receiveServerDetails model server result
-
-        LaunchImage image ->
-            ( model, Cmd.none )
+        InputCreateServerKeypairName createServerRequest keypairName ->
+            let
+                viewState =
+                    CreateServer { createServerRequest | keypairName = keypairName }
+            in
+                ( { model | viewState = viewState }, Cmd.none )
 
 
 requestAuthToken : Model -> Cmd Msg
@@ -274,7 +356,9 @@ requestAuthToken model =
             { method = "POST"
             , headers = []
             , url = model.creds.authURL
-            , body = Http.jsonBody requestBody {- Todo handle no response? -}
+            , body = Http.jsonBody requestBody
+
+            {- Todo handle no response? -}
             , expect = Http.expectStringResponse (\response -> Ok response)
             , timeout = Nothing
             , withCredentials = True
@@ -373,8 +457,8 @@ receiveServers model result =
             ( { model | servers = servers }, Cmd.none )
 
 
-requestServerDetails : Model -> Server -> Cmd Msg
-requestServerDetails model server =
+requestServerDetail : Model -> Server -> Cmd Msg
+requestServerDetail model server =
     Http.request
         { method = "GET"
         , headers = [ Http.header "X-Auth-Token" model.authToken ]
@@ -384,11 +468,11 @@ requestServerDetails model server =
         , timeout = Nothing
         , withCredentials = False
         }
-        |> Http.send (ReceiveServerDetails server)
+        |> Http.send (ReceiveServerDetail server)
 
 
-receiveServerDetails : Model -> Server -> Result Http.Error ServerDetails -> ( Model, Cmd Msg )
-receiveServerDetails model server result =
+receiveServerDetail : Model -> Server -> Result Http.Error ServerDetails -> ( Model, Cmd Msg )
+receiveServerDetail model server result =
     case result of
         Err error ->
             processError model error
@@ -416,17 +500,123 @@ decodeServerDetails =
         (Decode.at [ "server", "key_name" ] Decode.string)
 
 
+requestFlavors : Model -> Cmd Msg
+requestFlavors model =
+    Http.request
+        { method = "GET"
+        , headers = [ Http.header "X-Auth-Token" model.authToken ]
+        , url = model.endpoints.nova ++ "/flavors"
+        , body = Http.emptyBody
+        , expect = Http.expectJson decodeFlavors
+        , timeout = Nothing
+        , withCredentials = False
+        }
+        |> Http.send ReceiveFlavors
+
+
+decodeFlavors : Decode.Decoder (List Flavor)
+decodeFlavors =
+    Decode.field "flavors" (Decode.list flavorDecoder)
+
+
+flavorDecoder : Decode.Decoder Flavor
+flavorDecoder =
+    Decode.map2 Flavor
+        (Decode.field "id" Decode.string)
+        (Decode.field "name" Decode.string)
+
+
+receiveFlavors : Model -> Result Http.Error (List Flavor) -> ( Model, Cmd Msg )
+receiveFlavors model result =
+    case result of
+        Err error ->
+            processError model error
+
+        Ok flavors ->
+            ( { model | flavors = flavors }, Cmd.none )
+
+
+requestKeypairs : Model -> Cmd Msg
+requestKeypairs model =
+    Http.request
+        { method = "GET"
+        , headers = [ Http.header "X-Auth-Token" model.authToken ]
+        , url = model.endpoints.nova ++ "/os-keypairs"
+        , body = Http.emptyBody
+        , expect = Http.expectJson decodeKeypairs
+        , timeout = Nothing
+        , withCredentials = False
+        }
+        |> Http.send ReceiveKeypairs
+
+
+decodeKeypairs : Decode.Decoder (List Keypair)
+decodeKeypairs =
+    Decode.field "keypairs" (Decode.list keypairDecoder)
+
+
+keypairDecoder : Decode.Decoder Keypair
+keypairDecoder =
+    Decode.map3 Keypair
+        (Decode.at [ "keypair", "name" ] Decode.string)
+        (Decode.at [ "keypair", "public_key" ] Decode.string)
+        (Decode.at [ "keypair", "fingerprint" ] Decode.string)
+
+
+receiveKeypairs : Model -> Result Http.Error (List Keypair) -> ( Model, Cmd Msg )
+receiveKeypairs model result =
+    case result of
+        Err error ->
+            processError model error
+
+        Ok keypairs ->
+            ( { model | keypairs = keypairs }, Cmd.none )
+
+
+requestCreateServer : Model -> CreateServerRequest -> Cmd Msg
+requestCreateServer model createServerRequest =
+    let
+        requestBody =
+            Encode.object
+                [ ( "server"
+                  , Encode.object
+                        [ ( "name", Encode.string createServerRequest.name )
+                        , ( "flavorRef", Encode.string createServerRequest.flavorUuid )
+                        , ( "imageRef", Encode.string createServerRequest.imageUuid )
+                        , ( "key_name", Encode.string createServerRequest.keypairName )
+                        , ( "networks", Encode.string "auto" )
+                        ]
+                  )
+                ]
+    in
+        Http.request
+            { method = "POST"
+            , headers =
+                [ Http.header "X-Auth-Token" model.authToken
+
+                -- Microversion needed for automatic network provisioning
+                , Http.header "OpenStack-API-Version" "compute 2.38"
+                ]
+            , url = model.endpoints.nova ++ "/servers"
+            , body = Http.jsonBody requestBody
+            , expect = Http.expectString
+            , timeout = Nothing
+            , withCredentials = True
+            }
+            |> Http.send ReceiveCreateServer
+
+
 processError : Model -> a -> ( Model, Cmd Msg )
 processError model error =
     let
         newMsgs =
-            (toString error) :: model.messages
+            toString error :: model.messages
     in
         ( { model | messages = newMsgs }, Cmd.none )
 
 
 subscriptions : Model -> Sub Msg
-subscriptions model =
+subscriptions _ =
     Sub.none
 
 
@@ -454,7 +644,10 @@ view model =
                 viewServers model
 
             ServerDetail server ->
-                viewServerDetails server
+                viewServerDetail server
+
+            CreateServer createServerRequest ->
+                viewCreateServer model createServerRequest
         ]
 
 
@@ -554,7 +747,7 @@ renderImage : Image -> Html Msg
 renderImage image =
     div []
         [ p [] [ strong [] [ text image.name ] ]
-        , button [ onClick (LaunchImage image) ] [ text "Launch" ]
+        , button [ onClick (ChangeViewState (CreateServer (CreateServerRequest "" image.uuid "" ""))) ] [ text "Launch" ]
         , table []
             [ tr []
                 [ th [] [ text "Property" ]
@@ -599,7 +792,7 @@ renderServer server =
 
 
 viewNav : Model -> Html Msg
-viewNav model =
+viewNav _ =
     div []
         [ h2 [] [ text "Navigation" ]
         , button [ onClick (ChangeViewState Home) ] [ text "Home" ]
@@ -608,8 +801,8 @@ viewNav model =
         ]
 
 
-viewServerDetails : Server -> Html Msg
-viewServerDetails server =
+viewServerDetail : Server -> Html Msg
+viewServerDetail server =
     case server.details of
         Nothing ->
             text "Retrieving details??"
@@ -643,7 +836,90 @@ viewServerDetails server =
                         ]
                     , tr []
                         [ td [] [ text "SSH Key Name" ]
-                        , td [] [ text details.keyName ]
+                        , td [] [ text details.keypairName ]
                         ]
                     ]
                 ]
+
+
+viewCreateServer : Model -> CreateServerRequest -> Html Msg
+viewCreateServer model createServerRequest =
+    div []
+        [ h2 [] [ text "Create Server" ]
+        , table []
+            [ tr []
+                [ th [] [ text "Property" ]
+                , th [] [ text "Value" ]
+                ]
+            , tr []
+                [ td [] [ text "Server Name" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , placeholder "My Server"
+                        , value createServerRequest.name
+                        , onInput (InputCreateServerName createServerRequest)
+                        ]
+                        []
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "Image" ]
+                , td []
+                    [ input
+                        [ type_ "text"
+                        , value createServerRequest.imageUuid
+                        , onInput (InputCreateServerImage createServerRequest)
+                        ]
+                        []
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "Size" ]
+                , td []
+                    [ viewFlavorPicker model.flavors createServerRequest
+                    ]
+                ]
+            , tr []
+                [ td [] [ text "SSH Keypair" ]
+                , td []
+                    [ viewKeypairPicker model.keypairs createServerRequest
+                    ]
+
+                {-
+                   [ input
+                       [ type_ "text"
+                       , value createServerRequest.keypairName
+                       , onInput (InputCreateServerKeypairName createServerRequest)
+                       ]
+                       []
+                   ]
+                -}
+                ]
+            ]
+        , button [ onClick (RequestCreateServer createServerRequest) ] [ text "Create" ]
+        ]
+
+
+viewFlavorPicker : List Flavor -> CreateServerRequest -> Html Msg
+viewFlavorPicker flavors createServerRequest =
+    let
+        viewFlavorPickerLabel flavor =
+            label []
+                [ input [ type_ "radio", onClick (InputCreateServerSize createServerRequest flavor.uuid) ] []
+                , text flavor.name
+                ]
+    in
+        fieldset [] (List.map viewFlavorPickerLabel flavors)
+
+
+viewKeypairPicker : List Keypair -> CreateServerRequest -> Html Msg
+viewKeypairPicker keypairs createServerRequest =
+    let
+        viewKeypairPickerLabel keypair =
+            label []
+                [ input [ type_ "radio", onClick (InputCreateServerKeypairName createServerRequest keypair.name) ] []
+                , text keypair.name
+                ]
+    in
+        fieldset [] (List.map viewKeypairPickerLabel keypairs)
