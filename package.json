@@ -13,7 +13,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "chokidar": "^1.4.2"
+    "chokidar": "^1.4.2",
+    "electron": "^1.4.13"
   },
   "repository": {
     "type": "git",
